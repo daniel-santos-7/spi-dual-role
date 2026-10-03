@@ -1,6 +1,6 @@
-# spi
+# spi-dual-role
 
-VHDL-93 SPI master and slave with byte interfaces, plus a port that shares one set of pins between them.
+Dual-role SPI in VHDL-93: a master and a slave with byte interfaces, plus a port that runs either one on the same set of pins.
 
 - SPI mode 0, MSB first, 8-bit transfers
 - Master: SCK from a clock divider, ready/valid transmit, frame end marked by `tx_last`
