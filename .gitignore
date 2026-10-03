@@ -1,0 +1,5 @@
+build/
+spi_master
+spi_slave
+spi_port
+*.o
