@@ -9,17 +9,19 @@
 -- resolved signals with pull resistors (CS# up, SCK/MOSI/MISO down).
 -- Phase 0 straps A as master and B as slave; phase 1 swaps the roles.
 --
--- Each frame has a random length (1 to 8 bytes) and random data. The
--- master client inserts short gaps (SCK keeps running) and long gaps
--- (SCK stalls) and sometimes starts the next frame back to back. The
--- slave client answers each received byte after a random delay inside
--- the window the slave allows, or skips it so 0x00 goes out, and now
--- and then offers a stray reply after the last byte of a frame.
+-- Each frame has a random length (1 to 6 bytes, so shorter, equal and
+-- longer than the slave word) and random data. The master client
+-- inserts short gaps (SCK keeps running) and long gaps (SCK stalls)
+-- and sometimes starts the next frame back to back. The slave client
+-- puts a random reply word on tx_data for every frame, changing it
+-- as soon as the previous frame ends.
 --
--- Checks: data in both directions, frame boundaries, CS# high time,
--- SCK phases, MOSI/MISO changing only while SCK is low, frame length
--- with no gaps, pad contention, pin release, and that the unused role
--- inside each port stays silent while its client drives junk.
+-- Checks: the word, bit count and single rx_valid the slave reports
+-- after each frame, the reply bits the master receives (the word MSB
+-- first, then zeros), CS# high time, SCK phases, MOSI/MISO changing
+-- only while SCK is low, frame length with no gaps, pad contention,
+-- pin release, and that the unused role inside each port stays silent
+-- while its client drives junk.
 --
 ----------------------------------------------------------------------
 
@@ -33,19 +35,24 @@ entity tb_spi_port is
         SCK_DIV        : positive := 5;
         CS_HIGH_CYCLES : positive := 2;
         NUM_FRAMES     : positive := 60;
-        SEED           : positive := 1
+        SEED           : positive := 1;
+        S_WIDTH        : positive := 32;
+        S_CNT_BITS     : positive := 6
     );
 end entity tb_spi_port;
 
 architecture sim of tb_spi_port is
 
     constant CLK_PERIOD : time    := 10 ns;
-    constant MAX_BYTES  : integer := 8 * 2 * NUM_FRAMES;
+    constant MAX_LEN    : integer := 6;
+    constant MAX_BYTES  : integer := MAX_LEN * 2 * NUM_FRAMES;
     constant MAX_FRAMES : integer := 2 * NUM_FRAMES + 1;
-    constant TIMEOUT    : time    := 2 * NUM_FRAMES * (8 * (32 * SCK_DIV + 50) + 50) * CLK_PERIOD;
+    constant TIMEOUT    : time    := 2 * NUM_FRAMES * (MAX_LEN * (32 * SCK_DIV + 50) + 50) * CLK_PERIOD;
 
     subtype byte_t is std_logic_vector(7 downto 0);
+    subtype word_t is std_logic_vector(S_WIDTH-1 downto 0);
     type byte_arr_t  is array (natural range <>) of byte_t;
+    type word_arr_t  is array (natural range <>) of word_t;
     type int_arr_t   is array (natural range <>) of integer;
 
     function hex(v : byte_t) return string is
@@ -59,6 +66,17 @@ architecture sim of tb_spi_port is
         r(2) := DIGITS(to_integer(unsigned(v(3 downto 0))) + 1);
         return r;
     end function hex;
+
+    function hexw(v : word_t) return string is
+        variable p : std_logic_vector(((S_WIDTH+7)/8)*8-1 downto 0) := (others => '0');
+        variable r : string(1 to 2*p'length/8);
+    begin
+        p(S_WIDTH-1 downto 0) := v;
+        for i in 0 to (S_WIDTH+7)/8-1 loop
+            r(2*i+1 to 2*i+2) := hex(p(p'high-8*i downto p'high-8*i-7));
+        end loop;
+        return r;
+    end function hexw;
 
     -- clock, reset, control
     signal clk       : std_logic := '0';
@@ -97,12 +115,10 @@ architecture sim of tb_spi_port is
     signal a_m_tx_ready   : std_logic;
     signal a_m_rx_data    : byte_t;
     signal a_m_rx_valid   : std_logic;
-    signal a_s_active     : std_logic;
-    signal a_s_rx_data    : byte_t;
+    signal a_s_rx_data    : word_t;
+    signal a_s_rx_bits    : std_logic_vector(S_CNT_BITS-1 downto 0);
     signal a_s_rx_valid   : std_logic;
-    signal a_s_tx_data    : byte_t;
-    signal a_s_tx_valid   : std_logic;
-    signal a_s_tx_ready   : std_logic;
+    signal a_s_tx_data    : word_t;
 
     -- port B
     signal b_dbg_o        : std_logic;
@@ -120,12 +136,10 @@ architecture sim of tb_spi_port is
     signal b_m_tx_ready   : std_logic;
     signal b_m_rx_data    : byte_t;
     signal b_m_rx_valid   : std_logic;
-    signal b_s_active     : std_logic;
-    signal b_s_rx_data    : byte_t;
+    signal b_s_rx_data    : word_t;
+    signal b_s_rx_bits    : std_logic_vector(S_CNT_BITS-1 downto 0);
     signal b_s_rx_valid   : std_logic;
-    signal b_s_tx_data    : byte_t;
-    signal b_s_tx_valid   : std_logic;
-    signal b_s_tx_ready   : std_logic;
+    signal b_s_tx_data    : word_t;
 
     -- master client (whichever port is strapped as master)
     signal m_tx_data  : byte_t    := (others => '0');
@@ -137,23 +151,22 @@ architecture sim of tb_spi_port is
     signal m_rx_cnt   : natural := 0;
 
     -- slave client (whichever port is strapped as slave)
-    signal s_tx_data  : byte_t    := (others => '0');
-    signal s_tx_valid : std_logic := '0';
-    signal s_tx_ready : std_logic;
-    signal s_rx_data  : byte_t;
+    signal s_tx_data  : word_t;
+    signal s_rx_data  : word_t;
+    signal s_rx_bits  : std_logic_vector(S_CNT_BITS-1 downto 0);
     signal s_rx_valid : std_logic;
-    signal s_active   : std_logic;
     signal s_rx_cnt   : natural := 0;
 
     -- test plan, indexed by byte number (all frames back to back) or frame number
     signal plan_cnt   : natural := 0;
     signal plan_mtx   : byte_arr_t(0 to MAX_BYTES-1);
-    signal plan_resp  : byte_arr_t(0 to MAX_BYTES-1);
-    signal plan_first : std_logic_vector(0 to MAX_BYTES-1) := (others => '0');
+    signal plan_mexp  : byte_arr_t(0 to MAX_BYTES-1);
     signal plan_last  : std_logic_vector(0 to MAX_BYTES-1) := (others => '0');
-    signal plan_offer : std_logic_vector(0 to MAX_BYTES-1) := (others => '0');
-    signal plan_stray : std_logic_vector(0 to MAX_BYTES-1) := (others => '0');
-    signal plan_dly   : int_arr_t(0 to MAX_BYTES-1)        := (others => 0);
+    signal plan_fcnt  : natural := 0;
+    signal plan_sresp : word_arr_t(0 to MAX_FRAMES-1)      := (others => (others => '0'));
+    signal plan_srx   : word_arr_t(0 to MAX_FRAMES-1);
+    signal plan_sbits : int_arr_t(0 to MAX_FRAMES-1)       := (others => 0);
+    signal plan_fend  : int_arr_t(0 to MAX_FRAMES-1)       := (others => 0);
     signal plan_dur   : int_arr_t(0 to MAX_FRAMES-1)       := (others => -1);
     signal plan_b2b   : std_logic_vector(0 to MAX_FRAMES-1) := (others => '0');
 
@@ -169,7 +182,9 @@ begin
 
     tb_spi_port_a: entity work.spi_port generic map (
         SCK_DIV        => SCK_DIV,
-        CS_HIGH_CYCLES => CS_HIGH_CYCLES
+        CS_HIGH_CYCLES => CS_HIGH_CYCLES,
+        S_WIDTH        => S_WIDTH,
+        S_CNT_BITS     => S_CNT_BITS
     ) port map (
         clk_i        => clk,
         rst_i        => rst,
@@ -193,17 +208,17 @@ begin
         m_tx_ready_o => a_m_tx_ready,
         m_rx_data_o  => a_m_rx_data,
         m_rx_valid_o => a_m_rx_valid,
-        s_active_o   => a_s_active,
         s_rx_data_o  => a_s_rx_data,
+        s_rx_bits_o  => a_s_rx_bits,
         s_rx_valid_o => a_s_rx_valid,
-        s_tx_data_i  => a_s_tx_data,
-        s_tx_valid_i => a_s_tx_valid,
-        s_tx_ready_o => a_s_tx_ready
+        s_tx_data_i  => a_s_tx_data
     );
 
     tb_spi_port_b: entity work.spi_port generic map (
         SCK_DIV        => SCK_DIV,
-        CS_HIGH_CYCLES => CS_HIGH_CYCLES
+        CS_HIGH_CYCLES => CS_HIGH_CYCLES,
+        S_WIDTH        => S_WIDTH,
+        S_CNT_BITS     => S_CNT_BITS
     ) port map (
         clk_i        => clk,
         rst_i        => rst,
@@ -227,12 +242,10 @@ begin
         m_tx_ready_o => b_m_tx_ready,
         m_rx_data_o  => b_m_rx_data,
         m_rx_valid_o => b_m_rx_valid,
-        s_active_o   => b_s_active,
         s_rx_data_o  => b_s_rx_data,
+        s_rx_bits_o  => b_s_rx_bits,
         s_rx_valid_o => b_s_rx_valid,
-        s_tx_data_i  => b_s_tx_data,
-        s_tx_valid_i => b_s_tx_valid,
-        s_tx_ready_o => b_s_tx_ready
+        s_tx_data_i  => b_s_tx_data
     );
 
     sclk_pad <= a_sclk_o when a_sclk_oe = '1' else 'Z';
@@ -265,14 +278,11 @@ begin
     m_rx_data    <= a_m_rx_data  when swap = '0' else b_m_rx_data;
     m_rx_valid   <= a_m_rx_valid when swap = '0' else b_m_rx_valid;
 
-    a_s_tx_data  <= s_tx_data  when swap = '1' else x"FF";
-    a_s_tx_valid <= s_tx_valid when swap = '1' else junk_en;
-    b_s_tx_data  <= s_tx_data  when swap = '0' else x"FF";
-    b_s_tx_valid <= s_tx_valid when swap = '0' else junk_en;
-    s_tx_ready   <= b_s_tx_ready when swap = '0' else a_s_tx_ready;
+    a_s_tx_data  <= s_tx_data    when swap = '1' else (others => '1');
+    b_s_tx_data  <= s_tx_data    when swap = '0' else (others => '1');
     s_rx_data    <= b_s_rx_data  when swap = '0' else a_s_rx_data;
+    s_rx_bits    <= b_s_rx_bits  when swap = '0' else a_s_rx_bits;
     s_rx_valid   <= b_s_rx_valid when swap = '0' else a_s_rx_valid;
-    s_active     <= b_s_active   when swap = '0' else a_s_active;
 
     ------------------------------------------------------------------
     -- Stimulus: test plan and master client
@@ -285,14 +295,17 @@ begin
         variable v       : integer;
         variable n       : integer;
         variable g       : integer;
-        variable d       : integer;
+        variable p       : integer;
         variable idx     : natural := 0;
         variable frame   : natural := 0;
         variable stalled : boolean;
-        variable fb      : byte_arr_t(0 to 7);
-        variable n_skip  : natural := 0;
-        variable n_dir   : natural := 0;
-        variable n_stray : natural := 0;
+        variable fb      : byte_arr_t(0 to MAX_LEN-1);
+        variable resp    : word_t;
+        variable rxw     : word_t;
+        variable eb      : byte_t;
+        variable n_short : natural := 0;
+        variable n_exact : natural := 0;
+        variable n_long  : natural := 0;
         variable n_stall : natural := 0;
         variable n_b2b   : natural := 0;
 
@@ -344,37 +357,49 @@ begin
             end if;
 
             for f in 1 to NUM_FRAMES loop
-                rnd(1, 8, n);
+                rnd(1, MAX_LEN, n);
+                for i in resp'range loop
+                    rnd(0, 1, v);
+                    if v = 1 then
+                        resp(i) := '1';
+                    else
+                        resp(i) := '0';
+                    end if;
+                end loop;
+                rxw := (others => '0');
                 for k in 0 to n-1 loop
                     rnd(0, 255, v);
                     fb(k) := std_logic_vector(to_unsigned(v, 8));
                     plan_mtx(idx+k) <= fb(k);
-                    if k = 0 then
-                        plan_first(idx+k) <= '1';
-                    end if;
+                    for i in 7 downto 0 loop
+                        rxw := rxw(S_WIDTH-2 downto 0) & fb(k)(i);
+                        p := 8*k + 7 - i;
+                        if p < S_WIDTH then
+                            eb(i) := resp(S_WIDTH-1-p);
+                        else
+                            eb(i) := '0';
+                        end if;
+                    end loop;
+                    plan_mexp(idx+k) <= eb;
                     if k = n-1 then
                         plan_last(idx+k) <= '1';
-                        rnd(0, 3, v);
-                        if v = 0 then
-                            plan_stray(idx+k) <= '1';
-                            n_stray := n_stray + 1;
-                        end if;
                     end if;
-                    rnd(0, 3, v);
-                    rnd(0, SCK_DIV-1, d);
-                    plan_dly(idx+k) <= d;
-                    if k > 0 and v /= 0 then
-                        plan_offer(idx+k) <= '1';
-                        if d = SCK_DIV-1 then
-                            n_dir := n_dir + 1;
-                        end if;
-                    elsif k > 0 then
-                        n_skip := n_skip + 1;
-                    end if;
-                    rnd(0, 255, v);
-                    plan_resp(idx+k) <= std_logic_vector(to_unsigned(v, 8));
                 end loop;
-                plan_cnt <= idx + n;
+                plan_sresp(frame) <= resp;
+                plan_srx(frame)   <= rxw;
+                if 8*n < S_WIDTH then
+                    plan_sbits(frame) <= 8*n;
+                    n_short := n_short + 1;
+                elsif 8*n = S_WIDTH then
+                    plan_sbits(frame) <= 8*n;
+                    n_exact := n_exact + 1;
+                else
+                    plan_sbits(frame) <= S_WIDTH+1;
+                    n_long := n_long + 1;
+                end if;
+                plan_fend(frame) <= idx + n;
+                plan_cnt  <= idx + n;
+                plan_fcnt <= frame + 1;
 
                 stalled := false;
                 for k in 0 to n-1 loop
@@ -422,69 +447,48 @@ begin
 
             loop
                 wait until rising_edge(clk);
-                exit when m_rx_cnt = idx and s_rx_cnt = idx and s_active = '0';
+                exit when m_rx_cnt = idx and s_rx_cnt = frame;
             end loop;
             cycles(10);
         end loop;
 
-        assert n_skip > 0 and n_dir > 0 and n_stall > 0 and n_b2b > 0 and n_stray > 0
-            report "TB: coverage hole (skipped=" & integer'image(n_skip) & ", direct=" & integer'image(n_dir) &
-                   ", stalls=" & integer'image(n_stall) & ", back-to-back=" & integer'image(n_b2b) & ", stray=" & integer'image(n_stray) & ")"
+        assert n_short > 0 and n_exact > 0 and n_long > 0 and n_stall > 0 and n_b2b > 0
+            report "TB: coverage hole (short=" & integer'image(n_short) & ", exact=" & integer'image(n_exact) &
+                   ", long=" & integer'image(n_long) & ", stalls=" & integer'image(n_stall) &
+                   ", back-to-back=" & integer'image(n_b2b) & ")"
             severity error;
         report "TB: PASS - " & integer'image(frame) & " frames, " & integer'image(idx) & " bytes each way (" &
-               integer'image(n_skip) & " skipped replies, " & integer'image(n_dir) & " direct loads, " &
-               integer'image(n_stall) & " SCK stalls, " & integer'image(n_b2b) & " back-to-back frames, " &
-               integer'image(n_stray) & " stray replies)"
+               integer'image(n_short) & " shorter than the word, " & integer'image(n_exact) & " exact, " &
+               integer'image(n_long) & " longer, " & integer'image(n_stall) & " SCK stalls, " &
+               integer'image(n_b2b) & " back-to-back frames)"
             severity note;
         sim_done <= '1';
         wait;
     end process stim_proc;
 
     ------------------------------------------------------------------
-    -- Slave client: checks received bytes, offers replies
+    -- Slave client: checks each received word, sets the next reply
     ------------------------------------------------------------------
 
+    s_tx_data <= plan_sresp(s_rx_cnt);
+
     slave_proc: process
-        variable i     : natural   := 0;
-        variable act_p : std_logic := '0';
+        variable i : natural := 0;
     begin
         wait until rising_edge(clk);
-        if chk_on = '1' then
-            if s_active = '1' and act_p = '0' then
-                assert plan_first(i) = '1'
-                    report "slave: active_o rose before byte " & integer'image(i) & ", which does not start a frame" severity error;
-            elsif s_active = '0' and act_p = '1' then
-                assert i > 0 and plan_last(i-1) = '1'
-                    report "slave: active_o fell after byte " & integer'image(i) & ", which does not end a frame" severity error;
-            end if;
-            act_p := s_active;
-
-            if s_rx_valid = '1' then
-                assert i < plan_cnt
-                    report "slave: unexpected byte " & hex(s_rx_data) severity error;
-                assert s_rx_data = plan_mtx(i)
-                    report "slave: byte " & integer'image(i) & " is " & hex(s_rx_data) &
-                           ", expected " & hex(plan_mtx(i)) severity error;
-                i := i + 1;
-                s_rx_cnt <= i;
-                if plan_last(i-1) = '0' and plan_offer(i) = '1' then
-                    for c in 1 to plan_dly(i) loop
-                        wait until rising_edge(clk);
-                    end loop;
-                    s_tx_data  <= plan_resp(i);
-                    s_tx_valid <= '1';
-                    wait until rising_edge(clk);
-                    assert s_tx_ready = '1'
-                        report "slave: tx_ready low while the buffer should be empty" severity error;
-                    s_tx_valid <= '0';
-                elsif plan_stray(i-1) = '1' then
-                    -- a reply after the last byte stays in the buffer; CS# rising must drop it
-                    s_tx_data  <= x"EE";
-                    s_tx_valid <= '1';
-                    wait until rising_edge(clk);
-                    s_tx_valid <= '0';
-                end if;
-            end if;
+        if chk_on = '1' and s_rx_valid = '1' then
+            assert i < plan_fcnt
+                report "slave: unexpected word " & hexw(s_rx_data) severity error;
+            assert m_rx_cnt >= plan_fend(i)
+                report "slave: rx_valid for frame " & integer'image(i) & " before the frame ended" severity error;
+            assert to_integer(unsigned(s_rx_bits)) = plan_sbits(i)
+                report "slave: frame " & integer'image(i) & " reported " & integer'image(to_integer(unsigned(s_rx_bits))) &
+                       " bits, expected " & integer'image(plan_sbits(i)) severity error;
+            assert s_rx_data = plan_srx(i)
+                report "slave: frame " & integer'image(i) & " word is " & hexw(s_rx_data) &
+                       ", expected " & hexw(plan_srx(i)) severity error;
+            i := i + 1;
+            s_rx_cnt <= i;
         end if;
     end process slave_proc;
 
@@ -501,11 +505,7 @@ begin
         if chk_on = '1' and m_rx_valid = '1' then
             assert j < plan_cnt
                 report "master: unexpected byte " & hex(m_rx_data) severity error;
-            if plan_first(j) = '1' or plan_offer(j) = '0' then
-                exp := x"00";
-            else
-                exp := plan_resp(j);
-            end if;
+            exp := plan_mexp(j);
             assert m_rx_data = exp
                 report "master: byte " & integer'image(j) & " is " & hex(m_rx_data) &
                        ", expected " & hex(exp) severity error;
@@ -621,15 +621,15 @@ begin
                 if swap = '0' then
                     assert a_dbg_o = '0' and b_dbg_o = '1'
                         report "bus: dbg_o does not follow the strap" severity error;
-                    assert a_s_active = '0' and a_s_rx_valid = '0'
-                        report "bus: slave inside the master-strapped port A is active" severity error;
+                    assert a_s_rx_valid = '0'
+                        report "bus: slave inside the master-strapped port A reported a frame" severity error;
                     assert b_m_rx_valid = '0'
                         report "bus: master inside the slave-strapped port B ran a frame" severity error;
                 else
                     assert a_dbg_o = '1' and b_dbg_o = '0'
                         report "bus: dbg_o does not follow the strap" severity error;
-                    assert b_s_active = '0' and b_s_rx_valid = '0'
-                        report "bus: slave inside the master-strapped port B is active" severity error;
+                    assert b_s_rx_valid = '0'
+                        report "bus: slave inside the master-strapped port B reported a frame" severity error;
                     assert a_m_rx_valid = '0'
                         report "bus: master inside the slave-strapped port A ran a frame" severity error;
                 end if;

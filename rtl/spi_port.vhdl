@@ -11,7 +11,9 @@ use IEEE.std_logic_1164.all;
 entity spi_port is
     generic (
         SCK_DIV        : positive := 1;
-        CS_HIGH_CYCLES : positive := 2
+        CS_HIGH_CYCLES : positive := 2;
+        S_WIDTH        : positive := 32;
+        S_CNT_BITS     : positive := 6
     );
     port (
         clk_i        : in  std_logic;
@@ -36,12 +38,10 @@ entity spi_port is
         m_tx_ready_o : out std_logic;
         m_rx_data_o  : out std_logic_vector(7 downto 0);
         m_rx_valid_o : out std_logic;
-        s_active_o   : out std_logic;
-        s_rx_data_o  : out std_logic_vector(7 downto 0);
+        s_rx_data_o  : out std_logic_vector(S_WIDTH-1 downto 0);
+        s_rx_bits_o  : out std_logic_vector(S_CNT_BITS-1 downto 0);
         s_rx_valid_o : out std_logic;
-        s_tx_data_i  : in  std_logic_vector(7 downto 0);
-        s_tx_valid_i : in  std_logic;
-        s_tx_ready_o : out std_logic
+        s_tx_data_i  : in  std_logic_vector(S_WIDTH-1 downto 0)
     );
 end entity spi_port;
 
@@ -90,19 +90,20 @@ begin
         rx_valid_o => m_rx_valid_o
     );
 
-    spi_port_slave: entity work.spi_slave port map (
+    spi_port_slave: entity work.spi_slave generic map (
+        WIDTH    => S_WIDTH,
+        CNT_BITS => S_CNT_BITS
+    ) port map (
         clk_i      => clk_i,
         rst_i      => rst_i,
         sclk_i     => s_sclk,
         cs_n_i     => s_cs_n_s,
         mosi_i     => s_mosi,
         miso_o     => miso_o,
-        active_o   => s_active_o,
         rx_data_o  => s_rx_data_o,
+        rx_bits_o  => s_rx_bits_o,
         rx_valid_o => s_rx_valid_o,
-        tx_data_i  => s_tx_data_i,
-        tx_valid_i => s_tx_valid_i,
-        tx_ready_o => s_tx_ready_o
+        tx_data_i  => s_tx_data_i
     );
 
     sclk_oe <= not dbg;
