@@ -31,8 +31,7 @@ end entity spi_slave;
 architecture rtl of spi_slave is
 
     signal sclk_d    : std_logic;
-    signal cs_act    : std_logic;
-    signal cs_act_d  : std_logic;
+    signal cs_n_d    : std_logic;
     signal sclk_rise : std_logic;
     signal sclk_fall : std_logic;
     signal start     : std_logic;
@@ -51,35 +50,42 @@ begin
     begin
         if rising_edge(clk_i) then
             if rst_i = '1' then
-                sclk_d   <= '0';
-                cs_act_d <= '0';
+                sclk_d <= '0';
+                cs_n_d <= '1';
             else
-                sclk_d   <= sclk_i;
-                cs_act_d <= cs_act;
+                sclk_d <= sclk_i;
+                cs_n_d <= cs_n_i;
             end if;
         end if;
     end process edge_proc;
 
-    cs_act    <= not cs_n_i;
-    sclk_rise <= cs_act and sclk_i and not sclk_d;
-    sclk_fall <= cs_act and sclk_d and not sclk_i;
-    start     <= cs_act and not cs_act_d;
-    stop      <= cs_act_d and not cs_act;
+    sclk_rise <= sclk_i and not sclk_d and not cs_n_i;
+    sclk_fall <= sclk_d and not sclk_i and not cs_n_i;
+    start     <= cs_n_d and not cs_n_i;
+    stop      <= cs_n_i and not cs_n_d;
+
+    cnt_proc: process(clk_i)
+    begin
+        if rising_edge(clk_i) then
+            if rst_i = '1' then
+                bit_cnt <= (others => '0');
+            elsif start = '1' then
+                bit_cnt <= (others => '0');
+            elsif sclk_rise = '1' and bit_cnt /= WIDTH+1 then
+                bit_cnt <= bit_cnt + 1;
+            end if;
+        end if;
+    end process cnt_proc;
 
     rx_proc: process(clk_i)
     begin
         if rising_edge(clk_i) then
             if rst_i = '1' then
-                bit_cnt <= (others => '0');
-                rx_sh   <= (others => '0');
+                rx_sh <= (others => '0');
             elsif start = '1' then
-                bit_cnt <= (others => '0');
-                rx_sh   <= (others => '0');
+                rx_sh <= (others => '0');
             elsif sclk_rise = '1' then
                 rx_sh <= rx_sh(WIDTH-2 downto 0) & mosi_i;
-                if bit_cnt /= WIDTH+1 then
-                    bit_cnt <= bit_cnt + 1;
-                end if;
             end if;
         end if;
     end process rx_proc;
