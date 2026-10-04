@@ -106,6 +106,6 @@ begin
     miso_o     <= tx_sh(WIDTH-1);
     rx_data_o  <= rx_sh;
     rx_bits_o  <= std_logic_vector(bit_cnt);
-    rx_valid_o <= '1' when stop = '1' and bit_cnt /= 0 else '0';
+    rx_valid_o <= stop;
 
 end architecture rtl;
