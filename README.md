@@ -14,10 +14,13 @@ Dual-role SPI in VHDL-93: a master and a slave with byte interfaces, plus a port
 rtl/spi_master.vhdl   master
 rtl/spi_slave.vhdl    slave
 rtl/spi_port.vhdl     master + slave on shared pins
-Makefile              GHDL analysis and Yosys synthesis
+tbs/tb_spi_port.vhdl  self-checking testbench: two ports on one bus
+Makefile              GHDL analysis, simulation and Yosys synthesis
 ```
 
 `make check` analyses and elaborates the design with GHDL (`TOP=spi_master`, `spi_slave` or `spi_port`, default `spi_port`). `make synth` runs a generic Yosys synthesis of `TOP` with the GHDL plugin and prints the cell count.
+
+`make sim` runs the testbench, which wires two `spi_port` instances to one modelled bus (pull resistors, no tri-state inside the design), runs random frames with one as master and the other as slave, then swaps the roles. It checks data both ways, frame boundaries, SCK and `CS#` timing, pad contention and that the unused role in each port stays silent. It stops at the first error and prints `PASS` with coverage counts at the end. Generics go in `GENERICS`, e.g. `make sim GENERICS="-gSCK_DIV=7 -gCS_HIGH_CYCLES=4 -gSEED=3 -gNUM_FRAMES=200"` (`SCK_DIV` at least 5, because the slave needs SCK ≤ clk/10). `make wave` does the same and writes `build/tb_spi_port.ghw`.
 
 ## spi_master
 

@@ -5,8 +5,11 @@ GHDLFLAGS := --std=93 --workdir=$(BUILD)
 TOP       ?= spi_port
 
 RTL_SRCS  := rtl/spi_master.vhdl rtl/spi_slave.vhdl rtl/spi_port.vhdl
+TB_SRCS   := tbs/tb_spi_port.vhdl
+TB        ?= tb_spi_port
+GENERICS  ?=
 
-.PHONY: all check synth clean
+.PHONY: all check sim wave synth clean
 
 all: check
 
@@ -16,6 +19,14 @@ $(BUILD):
 check: | $(BUILD)
 	$(GHDL) -a $(GHDLFLAGS) $(RTL_SRCS)
 	$(GHDL) -e $(GHDLFLAGS) $(TOP)
+
+sim: | $(BUILD)
+	$(GHDL) -a $(GHDLFLAGS) $(RTL_SRCS) $(TB_SRCS)
+	$(GHDL) -e $(GHDLFLAGS) -o $(BUILD)/$(TB) $(TB)
+	$(BUILD)/$(TB) --assert-level=error $(GENERICS) $(SIMFLAGS)
+
+wave: SIMFLAGS += --wave=$(BUILD)/$(TB).ghw
+wave: sim
 
 synth: $(RTL_SRCS) | $(BUILD)
 	$(YOSYS) -m ghdl -q -l $(BUILD)/synth_$(TOP).log \
