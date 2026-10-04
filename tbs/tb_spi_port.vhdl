@@ -167,7 +167,7 @@ begin
     -- DUTs and bus
     ------------------------------------------------------------------
 
-    u_port_a: entity work.spi_port generic map (
+    tb_spi_port_a: entity work.spi_port generic map (
         SCK_DIV        => SCK_DIV,
         CS_HIGH_CYCLES => CS_HIGH_CYCLES
     ) port map (
@@ -201,7 +201,7 @@ begin
         s_tx_ready_o => a_s_tx_ready
     );
 
-    u_port_b: entity work.spi_port generic map (
+    tb_spi_port_b: entity work.spi_port generic map (
         SCK_DIV        => SCK_DIV,
         CS_HIGH_CYCLES => CS_HIGH_CYCLES
     ) port map (

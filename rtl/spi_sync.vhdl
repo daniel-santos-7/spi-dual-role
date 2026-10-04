@@ -26,7 +26,7 @@ end entity spi_sync;
 architecture rtl of spi_sync is
 begin
 
-    u_dbg_sync: entity work.bit_sync generic map (
+    spi_sync_dbg: entity work.bit_sync generic map (
         STAGES  => 2,
         RST_VAL => '0'
     ) port map (
@@ -36,7 +36,7 @@ begin
         q_o   => dbg_o
     );
 
-    u_sclk_sync: entity work.bit_sync generic map (
+    spi_sync_sclk: entity work.bit_sync generic map (
         STAGES  => 2,
         RST_VAL => '0'
     ) port map (
@@ -46,7 +46,7 @@ begin
         q_o   => sclk_o
     );
 
-    u_cs_sync: entity work.bit_sync generic map (
+    spi_sync_cs: entity work.bit_sync generic map (
         STAGES  => 2,
         RST_VAL => '1'
     ) port map (
@@ -56,7 +56,7 @@ begin
         q_o   => cs_n_o
     );
 
-    u_mosi_sync: entity work.bit_sync generic map (
+    spi_sync_mosi: entity work.bit_sync generic map (
         STAGES  => 2,
         RST_VAL => '0'
     ) port map (

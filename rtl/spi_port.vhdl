@@ -56,7 +56,7 @@ architecture rtl of spi_port is
 
 begin
 
-    u_sync: entity work.spi_sync port map (
+    spi_port_sync: entity work.spi_sync port map (
         clk_i  => clk_i,
         rst_i  => rst_i,
         dbg_i  => dbg_i,
@@ -72,7 +72,7 @@ begin
     m_tx_valid <= m_tx_valid_i and not dbg;
     s_cs_n     <= cs_n_i or not dbg;
 
-    u_master: entity work.spi_master generic map (
+    spi_port_master: entity work.spi_master generic map (
         SCK_DIV        => SCK_DIV,
         CS_HIGH_CYCLES => CS_HIGH_CYCLES
     ) port map (
@@ -90,7 +90,7 @@ begin
         rx_valid_o => m_rx_valid_o
     );
 
-    u_slave: entity work.spi_slave port map (
+    spi_port_slave: entity work.spi_slave port map (
         clk_i      => clk_i,
         rst_i      => rst_i,
         sclk_i     => s_sclk,
