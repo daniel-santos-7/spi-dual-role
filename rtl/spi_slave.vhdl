@@ -30,8 +30,8 @@ end entity spi_slave;
 
 architecture rtl of spi_slave is
 
-    signal sclk_d    : std_logic;
-    signal cs_n_d    : std_logic;
+    signal sclk_reg  : std_logic;
+    signal cs_n_reg  : std_logic;
     signal sclk_rise : std_logic;
     signal sclk_fall : std_logic;
     signal start     : std_logic;
@@ -50,19 +50,19 @@ begin
     begin
         if rising_edge(clk_i) then
             if rst_i = '1' then
-                sclk_d <= '0';
-                cs_n_d <= '1';
+                sclk_reg <= '0';
+                cs_n_reg <= '1';
             else
-                sclk_d <= sclk_i;
-                cs_n_d <= cs_n_i;
+                sclk_reg <= sclk_i;
+                cs_n_reg <= cs_n_i;
             end if;
         end if;
     end process edge_proc;
 
-    sclk_rise <= sclk_i and not sclk_d and not cs_n_i;
-    sclk_fall <= sclk_d and not sclk_i and not cs_n_i;
-    start     <= cs_n_d and not cs_n_i;
-    stop      <= cs_n_i and not cs_n_d;
+    sclk_rise <= sclk_i and not sclk_reg and not cs_n_i;
+    sclk_fall <= sclk_reg and not sclk_i and not cs_n_i;
+    start     <= cs_n_reg and not cs_n_i;
+    stop      <= cs_n_i and not cs_n_reg;
 
     cnt_proc: process(clk_i)
     begin
