@@ -13,8 +13,8 @@ entity spi_slave is
     port (
         clk_i      : in  std_logic;
         rst_i      : in  std_logic;
-        sclk_i     : in  std_logic;
-        cs_n_i     : in  std_logic;
+        sclk_i     : in  std_logic;  -- sclk_i, cs_n_i and mosi_i must already be
+        cs_n_i     : in  std_logic;  -- synchronised to clk_i (spi_port does it)
         mosi_i     : in  std_logic;
         miso_o     : out std_logic;
         active_o   : out std_logic;
@@ -28,9 +28,7 @@ end entity spi_slave;
 
 architecture rtl of spi_slave is
 
-    signal sclk_s : std_logic_vector(2 downto 0);
-    signal cs_s   : std_logic_vector(1 downto 0);
-    signal mosi_s : std_logic_vector(1 downto 0);
+    signal sclk_d    : std_logic;
 
     signal cs_act    : std_logic;
     signal sclk_rise : std_logic;
@@ -45,24 +43,20 @@ architecture rtl of spi_slave is
 
 begin
 
-    sync_proc: process(clk_i)
+    sclk_edge_proc: process(clk_i)
     begin
         if rising_edge(clk_i) then
             if rst_i = '1' then
-                sclk_s <= (others => '0');
-                cs_s   <= (others => '1');
-                mosi_s <= (others => '0');
+                sclk_d <= '0';
             else
-                sclk_s <= sclk_s(1 downto 0) & sclk_i;
-                cs_s   <= cs_s(0) & cs_n_i;
-                mosi_s <= mosi_s(0) & mosi_i;
+                sclk_d <= sclk_i;
             end if;
         end if;
-    end process sync_proc;
+    end process sclk_edge_proc;
 
-    cs_act    <= not cs_s(1);
-    sclk_rise <= sclk_s(1) and not sclk_s(2);
-    sclk_fall <= sclk_s(2) and not sclk_s(1);
+    cs_act    <= not cs_n_i;
+    sclk_rise <= sclk_i and not sclk_d;
+    sclk_fall <= sclk_d and not sclk_i;
     tx_load   <= '1' when cs_act = '1' and sclk_fall = '1' and bit_cnt = 0 else '0';
 
     shift_proc: process(clk_i)
@@ -80,7 +74,7 @@ begin
                 tx_full <= '0';
             else
                 if sclk_rise = '1' then
-                    rx_sh   <= rx_sh(5 downto 0) & mosi_s(1);
+                    rx_sh   <= rx_sh(5 downto 0) & mosi_i;
                     bit_cnt <= bit_cnt + 1;
                 end if;
                 if tx_load = '1' then
@@ -104,7 +98,7 @@ begin
 
     miso_o     <= tx_sh(7);
     active_o   <= cs_act;
-    rx_data_o  <= rx_sh & mosi_s(1);
+    rx_data_o  <= rx_sh & mosi_i;
     rx_valid_o <= '1' when cs_act = '1' and sclk_rise = '1' and bit_cnt = 7 else '0';
     tx_ready_o <= not tx_full;
 

@@ -11,6 +11,8 @@ Dual-role SPI in VHDL-93: a master and a slave with byte interfaces, plus a port
 ## Structure
 
 ```
+rtl/bit_sync.vhdl     single-bit synchroniser (flip-flop chain)
+rtl/spi_sync.vhdl     spi_port input synchronisers
 rtl/spi_master.vhdl   master
 rtl/spi_slave.vhdl    slave
 rtl/spi_port.vhdl     master + slave on shared pins
@@ -40,7 +42,7 @@ The master knows nothing about commands: the client decides the bytes and where 
 
 ## spi_slave
 
-SCK, `CS#` and MOSI pass through two-flip-flop synchronisers, so the slave runs entirely in the system clock domain. SCK must stay at least 5 system cycles high and 5 low (SCK ≤ clk/10), which leaves time for MISO to update after a falling edge. MOSI is sampled on the SCK rising edge and MISO changes on the falling edge.
+The slave runs entirely in the system clock domain: its SCK, `CS#` and MOSI inputs must already be synchronised to `clk`, which `spi_port` does with two-flip-flop synchronisers (`bit_sync`). SCK must stay at least 5 system cycles high and 5 low (SCK ≤ clk/10), which leaves time for MISO to update after a falling edge. MOSI is sampled on the SCK rising edge and MISO changes on the falling edge.
 
 - **Receive:** `rx_data_o` with a one-cycle `rx_valid_o` per received byte. There is no `ready`, because SPI cannot be held back: the consumer must take the byte in that cycle.
 - **Transmit:** ready/valid. A byte moves when `tx_valid_i` and `tx_ready_o` are both high, and `tx_data_i` must stay stable while `tx_valid_i` waits. The slave has a one-byte buffer, and `tx_ready_o` is high while it is empty. On the falling edge that ends a byte, the buffer goes to the shift register and empties. A byte offered in that very cycle to an empty buffer goes straight to the shift register. If nothing was offered by then, the next byte on MISO is `0x00`. The first byte of every frame is always `0x00`, since nothing is loaded before the first falling edge.
@@ -57,7 +59,7 @@ The byte for position *k* of a frame can only be offered once byte *k−1* has b
 | 0 | master | driven (`_oe` = 1) | input |
 | 1 | slave | inputs | driven while `CS#` is low, released otherwise |
 
-`dbg_i` goes through a two-flip-flop synchroniser, and `dbg_o` gives the synchronised value back to the client. It is a strap, not a run-time switch: change it only while the master is idle. While it is 1, the master's `tx_valid` is gated off, so no frame starts. While it is 0, the slave sees `CS#` as high, so master traffic never reaches it. The master byte interface has the `m_` prefix and the slave's the `s_` prefix.
+Every asynchronous input goes through a two-flip-flop synchroniser (`bit_sync`), all grouped in `spi_sync`: `dbg_i`, and SCK, `CS#` and MOSI on the way to the slave. The master needs none, since it only samples MISO at its own SCK edge. `dbg_o` gives the synchronised strap back to the client. It is a strap, not a run-time switch: change it only while the master is idle. While it is 1, the master's `tx_valid` is gated off, so no frame starts. While it is 0, the slave sees `CS#` as high, so master traffic never reaches it. The master byte interface has the `m_` prefix and the slave's the `s_` prefix.
 
 ## License
 

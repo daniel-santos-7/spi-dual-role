@@ -47,25 +47,28 @@ end entity spi_port;
 
 architecture rtl of spi_port is
 
-    signal dbg_s      : std_logic_vector(1 downto 0);
     signal dbg        : std_logic;
     signal m_tx_valid : std_logic;
     signal s_cs_n     : std_logic;
+    signal s_sclk     : std_logic;
+    signal s_cs_n_s   : std_logic;
+    signal s_mosi     : std_logic;
 
 begin
 
-    dbg_sync_proc: process(clk_i)
-    begin
-        if rising_edge(clk_i) then
-            if rst_i = '1' then
-                dbg_s <= (others => '0');
-            else
-                dbg_s <= dbg_s(0) & dbg_i;
-            end if;
-        end if;
-    end process dbg_sync_proc;
+    u_sync: entity work.spi_sync port map (
+        clk_i  => clk_i,
+        rst_i  => rst_i,
+        dbg_i  => dbg_i,
+        sclk_i => sclk_i,
+        cs_n_i => s_cs_n,
+        mosi_i => mosi_i,
+        dbg_o  => dbg,
+        sclk_o => s_sclk,
+        cs_n_o => s_cs_n_s,
+        mosi_o => s_mosi
+    );
 
-    dbg        <= dbg_s(1);
     m_tx_valid <= m_tx_valid_i and not dbg;
     s_cs_n     <= cs_n_i or not dbg;
 
@@ -90,9 +93,9 @@ begin
     u_slave: entity work.spi_slave port map (
         clk_i      => clk_i,
         rst_i      => rst_i,
-        sclk_i     => sclk_i,
-        cs_n_i     => s_cs_n,
-        mosi_i     => mosi_i,
+        sclk_i     => s_sclk,
+        cs_n_i     => s_cs_n_s,
+        mosi_i     => s_mosi,
         miso_o     => miso_o,
         active_o   => s_active_o,
         rx_data_o  => s_rx_data_o,
