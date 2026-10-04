@@ -45,13 +45,13 @@ The master knows nothing about commands: the client decides the bytes and where 
 | Generic | Default | Meaning |
 |---------|---------|---------|
 | `WIDTH` | 32 | Word size in bits (at least 2) |
-| `CNT_BITS` | 6 | Width of `rx_bits_o`; 2^`CNT_BITS` must exceed `WIDTH` + 1 |
+| `CNT_BITS` | 6 | Width of `rx_bits_o`; 2^`CNT_BITS` must exceed `WIDTH` |
 
 The slave runs entirely in the system clock domain: its SCK, `CS#` and MOSI inputs must already be synchronised to `clk`, which `spi_port` does with two-flip-flop synchronisers (`bit_sync`). SCK must stay at least 5 system cycles high and 5 low (SCK ≤ clk/10), which leaves time for MISO to update after a falling edge. MOSI is sampled on the SCK rising edge and MISO changes on the falling edge.
 
 A frame (one `CS#` low) carries one word in each direction:
 
-- **Receive:** the bits shift into a `WIDTH`-bit register, cleared when `CS#` falls. When `CS#` rises, `rx_valid_o` pulses for one cycle if at least one bit arrived, with `rx_data_o` holding the word and `rx_bits_o` the number of bits (unsigned, `CNT_BITS` wide). The word is right-aligned: a frame of *n* < `WIDTH` bits leaves its bits in `n-1 downto 0` and zeros above. `rx_bits_o` = `WIDTH` + 1 means more than `WIDTH` bits arrived; `rx_data_o` then holds the last `WIDTH`. Both outputs stay valid until the next frame starts. A frame with no SCK edge reports nothing. There is no `ready`: the client must take the word in that cycle.
+- **Receive:** the bits shift into a `WIDTH`-bit register, cleared when `CS#` falls. When `CS#` rises, `rx_valid_o` pulses for one cycle if at least one bit arrived, with `rx_data_o` holding the word and `rx_bits_o` the number of bits (unsigned, `CNT_BITS` wide). The word is right-aligned: a frame of *n* < `WIDTH` bits leaves its bits in `n-1 downto 0` and zeros above. The register stops at `WIDTH` bits: in a longer frame `rx_data_o` holds the first `WIDTH` bits, `rx_bits_o` reads `WIDTH`, and the rest is ignored. Both outputs stay valid until the next frame starts. A frame with no SCK edge reports nothing. There is no `ready`: the client must take the word in that cycle.
 - **Transmit:** `tx_data_i` is loaded into the shift register when `CS#` falls and goes out MSB first, so the host gets the first *n* bits of the word in a frame of *n* bits, and zeros after the `WIDTH`-th bit. The client keeps the next reply on `tx_data_i` between frames; there is no handshake.
 
 The slave sees `CS#` through the synchroniser, so the edges are detected two to three cycles late. The host must keep at least 5 system cycles between `CS#` falling and the first SCK rise, so that the first bit is on MISO in time. The reply for the next frame must be on `tx_data_i` by the cycle in which the slave sees `CS#` fall: a client that updates it after `rx_valid_o` has two cycles when the host keeps `CS#` high for only two cycles, and the host's `CS#` high time beyond that is extra margin.

@@ -44,7 +44,7 @@ architecture rtl of spi_slave is
 begin
 
     assert WIDTH >= 2 report "SPI slave: WIDTH must be at least 2." severity failure;
-    assert 2**CNT_BITS > WIDTH+1 report "SPI slave: CNT_BITS too small to count WIDTH+1." severity failure;
+    assert 2**CNT_BITS > WIDTH report "SPI slave: CNT_BITS too small to count WIDTH." severity failure;
 
     edge_proc: process(clk_i)
     begin
@@ -71,7 +71,7 @@ begin
                 bit_cnt <= (others => '0');
             elsif start = '1' then
                 bit_cnt <= (others => '0');
-            elsif sclk_rise = '1' and bit_cnt /= WIDTH+1 then
+            elsif sclk_rise = '1' and bit_cnt /= WIDTH then
                 bit_cnt <= bit_cnt + 1;
             end if;
         end if;
@@ -84,7 +84,7 @@ begin
                 rx_sh <= (others => '0');
             elsif start = '1' then
                 rx_sh <= (others => '0');
-            elsif sclk_rise = '1' then
+            elsif sclk_rise = '1' and bit_cnt /= WIDTH then
                 rx_sh <= rx_sh(WIDTH-2 downto 0) & mosi_i;
             end if;
         end if;

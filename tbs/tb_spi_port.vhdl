@@ -372,9 +372,9 @@ begin
                     fb(k) := std_logic_vector(to_unsigned(v, 8));
                     plan_mtx(idx+k) <= fb(k);
                     for i in 7 downto 0 loop
-                        rxw := rxw(S_WIDTH-2 downto 0) & fb(k)(i);
                         p := 8*k + 7 - i;
                         if p < S_WIDTH then
+                            rxw   := rxw(S_WIDTH-2 downto 0) & fb(k)(i);
                             eb(i) := resp(S_WIDTH-1-p);
                         else
                             eb(i) := '0';
@@ -394,7 +394,7 @@ begin
                     plan_sbits(frame) <= 8*n;
                     n_exact := n_exact + 1;
                 else
-                    plan_sbits(frame) <= S_WIDTH+1;
+                    plan_sbits(frame) <= S_WIDTH;
                     n_long := n_long + 1;
                 end if;
                 plan_fend(frame) <= idx + n;
