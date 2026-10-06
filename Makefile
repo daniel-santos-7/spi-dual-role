@@ -4,12 +4,12 @@ BUILD     := build
 GHDLFLAGS := --std=93 --workdir=$(BUILD)
 TOP       ?= spi_port
 
-RTL_SRCS  := rtl/bit_sync.vhdl rtl/spi_sync.vhdl rtl/spi_master.vhdl rtl/spi_slave.vhdl rtl/spi_port.vhdl
+RTL_SRCS  := rtl/bit_sync.vhdl rtl/spi_sync.vhdl rtl/spi_shift.vhdl rtl/spi_master.vhdl rtl/spi_slave.vhdl rtl/spi_port.vhdl
 TB_SRCS   := tbs/tb_spi_port.vhdl
 TB        ?= tb_spi_port
 GENERICS  ?=
 
-.PHONY: all check sim wave synth clean
+.PHONY: all check sim test wave synth clean
 
 all: check
 
@@ -25,6 +25,9 @@ sim: | $(BUILD)
 	$(GHDL) -e $(GHDLFLAGS) -o $(BUILD)/$(TB) $(TB)
 	$(BUILD)/$(TB) --assert-level=error $(GENERICS) $(SIMFLAGS)
 
+test:
+	@for w in 16 32 48; do $(MAKE) --no-print-directory sim GENERICS="-gM_WIDTH=$$w $(GENERICS)" || exit 1; done
+
 wave: SIMFLAGS += --wave=$(BUILD)/$(TB).ghw
 wave: sim
 
@@ -37,4 +40,4 @@ synth: $(RTL_SRCS) | $(BUILD)
 	@sed -n '/=== $(TOP) ===/,$$p' $(BUILD)/synth_$(TOP).stat
 
 clean:
-	rm -rf $(BUILD) bit_sync spi_sync spi_master spi_slave spi_port *.o
+	rm -rf $(BUILD) bit_sync spi_sync spi_shift spi_master spi_slave spi_port *.o

@@ -12,6 +12,8 @@ entity spi_port is
     generic (
         SCK_DIV        : positive := 1;
         CS_HIGH_CYCLES : positive := 2;
+        M_WIDTH        : positive := 64;
+        M_CNT_BITS     : positive := 7;
         S_WIDTH        : positive := 32;
         S_CNT_BITS     : positive := 6
     );
@@ -32,11 +34,10 @@ entity spi_port is
         miso_i       : in  std_logic;
         miso_o       : out std_logic;
         miso_oe      : out std_logic;
-        m_tx_data_i  : in  std_logic_vector(7 downto 0);
-        m_tx_last_i  : in  std_logic;
-        m_tx_valid_i : in  std_logic;
-        m_tx_ready_o : out std_logic;
-        m_rx_data_o  : out std_logic_vector(7 downto 0);
+        m_start_i    : in  std_logic;
+        m_ready_o    : out std_logic;
+        m_tx_data_i  : in  std_logic_vector(M_WIDTH-1 downto 0);
+        m_rx_data_o  : out std_logic_vector(M_WIDTH-1 downto 0);
         m_rx_valid_o : out std_logic;
         s_rx_data_o  : out std_logic_vector(S_WIDTH-1 downto 0);
         s_rx_bits_o  : out std_logic_vector(S_CNT_BITS-1 downto 0);
@@ -48,7 +49,7 @@ end entity spi_port;
 architecture rtl of spi_port is
 
     signal dbg        : std_logic;
-    signal m_tx_valid : std_logic;
+    signal m_start    : std_logic;
     signal s_cs_n     : std_logic;
     signal s_sclk     : std_logic;
     signal s_cs_n_s   : std_logic;
@@ -69,12 +70,14 @@ begin
         mosi_o => s_mosi
     );
 
-    m_tx_valid <= m_tx_valid_i and not dbg;
+    m_start    <= m_start_i and not dbg;
     s_cs_n     <= cs_n_i or not dbg;
 
     spi_port_master: entity work.spi_master generic map (
         SCK_DIV        => SCK_DIV,
-        CS_HIGH_CYCLES => CS_HIGH_CYCLES
+        CS_HIGH_CYCLES => CS_HIGH_CYCLES,
+        WIDTH          => M_WIDTH,
+        CNT_BITS       => M_CNT_BITS
     ) port map (
         clk_i      => clk_i,
         rst_i      => rst_i,
@@ -82,10 +85,9 @@ begin
         cs_n_o     => cs_n_o,
         mosi_o     => mosi_o,
         miso_i     => miso_i,
+        start_i    => m_start,
+        ready_o    => m_ready_o,
         tx_data_i  => m_tx_data_i,
-        tx_last_i  => m_tx_last_i,
-        tx_valid_i => m_tx_valid,
-        tx_ready_o => m_tx_ready_o,
         rx_data_o  => m_rx_data_o,
         rx_valid_o => m_rx_valid_o
     );

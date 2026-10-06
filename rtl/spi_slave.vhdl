@@ -7,7 +7,6 @@
 
 library IEEE;
 use IEEE.std_logic_1164.all;
-use IEEE.numeric_std.all;
 
 entity spi_slave is
     generic (
@@ -37,14 +36,7 @@ architecture rtl of spi_slave is
     signal start     : std_logic;
     signal stop      : std_logic;
 
-    signal bit_cnt : unsigned(CNT_BITS-1 downto 0);
-    signal rx_sh   : std_logic_vector(WIDTH-1 downto 0);
-    signal tx_sh   : std_logic_vector(WIDTH-1 downto 0);
-
 begin
-
-    assert WIDTH >= 2 report "SPI slave: WIDTH must be at least 2." severity failure;
-    assert 2**CNT_BITS > WIDTH report "SPI slave: CNT_BITS too small to count WIDTH." severity failure;
 
     edge_proc: process(clk_i)
     begin
@@ -64,48 +56,22 @@ begin
     start     <= cs_n_reg and not cs_n_i;
     stop      <= cs_n_i and not cs_n_reg;
 
-    cnt_proc: process(clk_i)
-    begin
-        if rising_edge(clk_i) then
-            if rst_i = '1' then
-                bit_cnt <= (others => '0');
-            elsif start = '1' then
-                bit_cnt <= (others => '0');
-            elsif sclk_rise = '1' and bit_cnt /= WIDTH then
-                bit_cnt <= bit_cnt + 1;
-            end if;
-        end if;
-    end process cnt_proc;
-
-    rx_proc: process(clk_i)
-    begin
-        if rising_edge(clk_i) then
-            if rst_i = '1' then
-                rx_sh <= (others => '0');
-            elsif start = '1' then
-                rx_sh <= (others => '0');
-            elsif sclk_rise = '1' and bit_cnt /= WIDTH then
-                rx_sh <= rx_sh(WIDTH-2 downto 0) & mosi_i;
-            end if;
-        end if;
-    end process rx_proc;
-
-    tx_proc: process(clk_i)
-    begin
-        if rising_edge(clk_i) then
-            if rst_i = '1' then
-                tx_sh <= (others => '0');
-            elsif start = '1' then
-                tx_sh <= tx_data_i;
-            elsif sclk_fall = '1' then
-                tx_sh <= tx_sh(WIDTH-2 downto 0) & '0';
-            end if;
-        end if;
-    end process tx_proc;
-
-    miso_o     <= tx_sh(WIDTH-1);
-    rx_data_o  <= rx_sh;
-    rx_bits_o  <= std_logic_vector(bit_cnt);
-    rx_valid_o <= stop;
+    spi_slave_shift: entity work.spi_shift generic map (
+        WIDTH    => WIDTH,
+        CNT_BITS => CNT_BITS
+    ) port map (
+        clk_i      => clk_i,
+        rst_i      => rst_i,
+        start_i    => start,
+        stop_i     => stop,
+        rise_i     => sclk_rise,
+        fall_i     => sclk_fall,
+        din_i      => mosi_i,
+        dout_o     => miso_o,
+        tx_data_i  => tx_data_i,
+        rx_data_o  => rx_data_o,
+        rx_bits_o  => rx_bits_o,
+        rx_valid_o => rx_valid_o
+    );
 
 end architecture rtl;
