@@ -36,10 +36,10 @@ entity tb_spi_port is
         CS_HIGH_CYCLES : positive := 2;
         NUM_FRAMES     : positive := 60;
         SEED           : positive := 1;
+        WIDTH          : positive := 64;
+        CNT_BITS       : positive := 7;
         M_WIDTH        : positive := 48;
-        M_CNT_BITS     : positive := 7;
-        S_WIDTH        : positive := 32;
-        S_CNT_BITS     : positive := 6
+        S_WIDTH        : positive := 32
     );
 end entity tb_spi_port;
 
@@ -117,7 +117,7 @@ architecture sim of tb_spi_port is
     signal a_m_rx_data  : mword_t;
     signal a_m_rx_valid : std_logic;
     signal a_s_rx_data  : sword_t;
-    signal a_s_rx_bits  : std_logic_vector(S_CNT_BITS-1 downto 0);
+    signal a_s_rx_bits  : std_logic_vector(CNT_BITS-1 downto 0);
     signal a_s_rx_valid : std_logic;
     signal a_s_tx_data  : sword_t;
 
@@ -137,7 +137,7 @@ architecture sim of tb_spi_port is
     signal b_m_rx_data  : mword_t;
     signal b_m_rx_valid : std_logic;
     signal b_s_rx_data  : sword_t;
-    signal b_s_rx_bits  : std_logic_vector(S_CNT_BITS-1 downto 0);
+    signal b_s_rx_bits  : std_logic_vector(CNT_BITS-1 downto 0);
     signal b_s_rx_valid : std_logic;
     signal b_s_tx_data  : sword_t;
 
@@ -152,7 +152,7 @@ architecture sim of tb_spi_port is
     -- slave client (whichever port is strapped as slave)
     signal s_tx_data  : sword_t;
     signal s_rx_data  : sword_t;
-    signal s_rx_bits  : std_logic_vector(S_CNT_BITS-1 downto 0);
+    signal s_rx_bits  : std_logic_vector(CNT_BITS-1 downto 0);
     signal s_rx_valid : std_logic;
     signal s_rx_cnt   : natural := 0;
 
@@ -176,10 +176,10 @@ begin
     tb_spi_port_a: entity work.spi_port generic map (
         SCK_DIV        => SCK_DIV,
         CS_HIGH_CYCLES => CS_HIGH_CYCLES,
+        WIDTH          => WIDTH,
+        CNT_BITS       => CNT_BITS,
         M_WIDTH        => M_WIDTH,
-        M_CNT_BITS     => M_CNT_BITS,
-        S_WIDTH        => S_WIDTH,
-        S_CNT_BITS     => S_CNT_BITS
+        S_WIDTH        => S_WIDTH
     ) port map (
         clk_i        => clk,
         rst_i        => rst,
@@ -211,10 +211,10 @@ begin
     tb_spi_port_b: entity work.spi_port generic map (
         SCK_DIV        => SCK_DIV,
         CS_HIGH_CYCLES => CS_HIGH_CYCLES,
+        WIDTH          => WIDTH,
+        CNT_BITS       => CNT_BITS,
         M_WIDTH        => M_WIDTH,
-        M_CNT_BITS     => M_CNT_BITS,
-        S_WIDTH        => S_WIDTH,
-        S_CNT_BITS     => S_CNT_BITS
+        S_WIDTH        => S_WIDTH
     ) port map (
         clk_i        => clk,
         rst_i        => rst,
