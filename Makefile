@@ -26,7 +26,7 @@ sim: | $(BUILD)
 	$(BUILD)/$(TB) --assert-level=error $(GENERICS) $(SIMFLAGS)
 
 test:
-	@for w in 16 32 48; do $(MAKE) --no-print-directory sim GENERICS="-gM_WIDTH=$$w $(GENERICS)" || exit 1; done
+	@for w in 16 32 64; do $(MAKE) --no-print-directory sim GENERICS="-gWIDTH=$$w $(GENERICS)" || exit 1; done
 
 wave: SIMFLAGS += --wave=$(BUILD)/$(TB).ghw
 wave: sim

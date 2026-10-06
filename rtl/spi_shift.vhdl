@@ -17,7 +17,6 @@ entity spi_shift is
     port (
         clk_i      : in  std_logic;
         rst_i      : in  std_logic;
-        len_i      : in  std_logic_vector(CNT_BITS-1 downto 0);
         start_i    : in  std_logic;
         stop_i     : in  std_logic;
         rise_i     : in  std_logic;
@@ -49,7 +48,7 @@ begin
                 bit_cnt <= (others => '0');
             elsif start_i = '1' then
                 bit_cnt <= (others => '0');
-            elsif rise_i = '1' and bit_cnt /= unsigned(len_i) then
+            elsif rise_i = '1' and bit_cnt /= WIDTH then
                 bit_cnt <= bit_cnt + 1;
             end if;
         end if;
@@ -62,7 +61,7 @@ begin
                 rx_sh <= (others => '0');
             elsif start_i = '1' then
                 rx_sh <= (others => '0');
-            elsif rise_i = '1' and bit_cnt /= unsigned(len_i) then
+            elsif rise_i = '1' and bit_cnt /= WIDTH then
                 rx_sh <= rx_sh(WIDTH-2 downto 0) & din_i;
             end if;
         end if;

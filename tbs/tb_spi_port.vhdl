@@ -8,20 +8,23 @@
 -- Two spi_port instances, A and B, share one set of pads modelled as
 -- resolved signals with pull resistors (CS# up, SCK/MOSI/MISO down).
 -- Phase 0 straps A as master and B as slave; phase 1 swaps the roles.
---
--- Every frame is M_WIDTH bits of random data from the master and a
--- random S_WIDTH-bit reply from the slave. M_WIDTH sets whether the
--- frames are shorter than, equal to or longer than the slave word
--- (make test runs all three). The master client sometimes starts the
+-- Every frame is WIDTH bits of random data from the master and a
+-- random reply from the slave. The master client sometimes starts the
 -- next frame back to back, otherwise it waits a random gap. The slave
 -- client puts the next reply on tx_data as soon as a frame ends.
 --
+-- Phase 2 straps both ports as slaves and drives the pins from a
+-- software host, with frames of any length (empty, shorter, equal and
+-- longer than WIDTH). Both slaves get the same reply, so they drive
+-- MISO with the same value once it is loaded; until then each shows a
+-- leftover bit, so MISO contention is not checked in this phase (every
+-- reply bit the host samples is).
+--
 -- Checks: the word, bit count and single rx_valid the slave reports
--- after each frame, the word the master receives (the slave reply MSB
--- first, then zeros), CS# high time, SCK phases, MOSI/MISO changing
--- only while SCK is low, frame length, pad contention, pin release,
--- and that the unused role inside each port stays silent while its
--- client drives junk.
+-- after each frame, the word the master receives, CS# high time, SCK
+-- phases, MOSI/MISO changing only while SCK is low, frame length, pad
+-- contention, pin release, and that the unused role inside each port
+-- stays silent while its client drives junk.
 --
 ----------------------------------------------------------------------
 
@@ -35,34 +38,23 @@ entity tb_spi_port is
         SCK_DIV        : positive := 5;
         CS_HIGH_CYCLES : positive := 2;
         NUM_FRAMES     : positive := 60;
+        HOST_FRAMES    : positive := 30;
         SEED           : positive := 1;
-        WIDTH          : positive := 64;
-        CNT_BITS       : positive := 7;
-        M_WIDTH        : positive := 48;
-        S_WIDTH        : positive := 32
+        WIDTH          : positive := 32;
+        CNT_BITS       : positive := 7
     );
 end entity tb_spi_port;
 
 architecture sim of tb_spi_port is
 
-    function minimum(a, b : integer) return integer is
-    begin
-        if a < b then
-            return a;
-        end if;
-        return b;
-    end function minimum;
-
     constant CLK_PERIOD : time    := 10 ns;
-    constant K          : integer := minimum(M_WIDTH, S_WIDTH);
-    constant FRAME_CYC  : integer := 2 * M_WIDTH * SCK_DIV;
+    constant FRAME_CYC  : integer := 2 * WIDTH * SCK_DIV;
+    constant HOST_MAX   : integer := WIDTH + 8;
     constant MAX_FRAMES : integer := 2 * NUM_FRAMES + 1;
-    constant TIMEOUT    : time    := 2 * NUM_FRAMES * (FRAME_CYC + 100) * CLK_PERIOD;
+    constant TIMEOUT    : time    := (2 * NUM_FRAMES * (FRAME_CYC + 100) + HOST_FRAMES * (2 * HOST_MAX * SCK_DIV + 100)) * CLK_PERIOD;
 
-    subtype mword_t is std_logic_vector(M_WIDTH-1 downto 0);
-    subtype sword_t is std_logic_vector(S_WIDTH-1 downto 0);
-    type mword_arr_t is array (natural range <>) of mword_t;
-    type sword_arr_t is array (natural range <>) of sword_t;
+    subtype word_t is std_logic_vector(WIDTH-1 downto 0);
+    type word_arr_t is array (natural range <>) of word_t;
 
     function hex(v : std_logic_vector) return string is
         constant DIGITS : string(1 to 16) := "0123456789ABCDEF";
@@ -91,6 +83,13 @@ architecture sim of tb_spi_port is
     signal strap_a   : std_logic := '0';
     signal strap_b   : std_logic := '1';
 
+    -- software host (phase 2)
+    signal host_en   : std_logic := '0';
+    signal host_sclk : std_logic := '0';
+    signal host_cs_n : std_logic := '1';
+    signal host_mosi : std_logic := '0';
+    signal host_resp : word_t    := (others => '0');
+
     -- pads and their logic levels
     signal sclk_pad : std_logic;
     signal cs_n_pad : std_logic;
@@ -113,13 +112,13 @@ architecture sim of tb_spi_port is
     signal a_miso_oe    : std_logic;
     signal a_m_start    : std_logic;
     signal a_m_ready    : std_logic;
-    signal a_m_tx_data  : mword_t;
-    signal a_m_rx_data  : mword_t;
+    signal a_m_tx_data  : word_t;
+    signal a_m_rx_data  : word_t;
     signal a_m_rx_valid : std_logic;
-    signal a_s_rx_data  : sword_t;
+    signal a_s_rx_data  : word_t;
     signal a_s_rx_bits  : std_logic_vector(CNT_BITS-1 downto 0);
     signal a_s_rx_valid : std_logic;
-    signal a_s_tx_data  : sword_t;
+    signal a_s_tx_data  : word_t;
 
     -- port B
     signal b_dbg_o      : std_logic;
@@ -133,34 +132,33 @@ architecture sim of tb_spi_port is
     signal b_miso_oe    : std_logic;
     signal b_m_start    : std_logic;
     signal b_m_ready    : std_logic;
-    signal b_m_tx_data  : mword_t;
-    signal b_m_rx_data  : mword_t;
+    signal b_m_tx_data  : word_t;
+    signal b_m_rx_data  : word_t;
     signal b_m_rx_valid : std_logic;
-    signal b_s_rx_data  : sword_t;
+    signal b_s_rx_data  : word_t;
     signal b_s_rx_bits  : std_logic_vector(CNT_BITS-1 downto 0);
     signal b_s_rx_valid : std_logic;
-    signal b_s_tx_data  : sword_t;
+    signal b_s_tx_data  : word_t;
 
     -- master client (whichever port is strapped as master)
     signal m_start    : std_logic := '0';
     signal m_ready    : std_logic;
-    signal m_tx_data  : mword_t   := (others => '0');
-    signal m_rx_data  : mword_t;
+    signal m_tx_data  : word_t    := (others => '0');
+    signal m_rx_data  : word_t;
     signal m_rx_valid : std_logic;
     signal m_rx_cnt   : natural := 0;
 
     -- slave client (whichever port is strapped as slave)
-    signal s_tx_data  : sword_t;
-    signal s_rx_data  : sword_t;
+    signal s_tx_data  : word_t;
+    signal s_rx_data  : word_t;
     signal s_rx_bits  : std_logic_vector(CNT_BITS-1 downto 0);
     signal s_rx_valid : std_logic;
     signal s_rx_cnt   : natural := 0;
 
     -- test plan, indexed by frame number
     signal plan_fcnt  : natural := 0;
-    signal plan_mexp  : mword_arr_t(0 to MAX_FRAMES-1);
-    signal plan_sresp : sword_arr_t(0 to MAX_FRAMES-1)      := (others => (others => '0'));
-    signal plan_srx   : sword_arr_t(0 to MAX_FRAMES-1);
+    signal plan_mtx   : word_arr_t(0 to MAX_FRAMES-1);
+    signal plan_sresp : word_arr_t(0 to MAX_FRAMES-1)       := (others => (others => '0'));
     signal plan_b2b   : std_logic_vector(0 to MAX_FRAMES-1) := (others => '0');
 
 begin
@@ -177,9 +175,7 @@ begin
         SCK_DIV        => SCK_DIV,
         CS_HIGH_CYCLES => CS_HIGH_CYCLES,
         WIDTH          => WIDTH,
-        CNT_BITS       => CNT_BITS,
-        M_WIDTH        => M_WIDTH,
-        S_WIDTH        => S_WIDTH
+        CNT_BITS       => CNT_BITS
     ) port map (
         clk_i        => clk,
         rst_i        => rst,
@@ -212,9 +208,7 @@ begin
         SCK_DIV        => SCK_DIV,
         CS_HIGH_CYCLES => CS_HIGH_CYCLES,
         WIDTH          => WIDTH,
-        CNT_BITS       => CNT_BITS,
-        M_WIDTH        => M_WIDTH,
-        S_WIDTH        => S_WIDTH
+        CNT_BITS       => CNT_BITS
     ) port map (
         clk_i        => clk,
         rst_i        => rst,
@@ -245,12 +239,15 @@ begin
 
     sclk_pad <= a_sclk_o when a_sclk_oe = '1' else 'Z';
     sclk_pad <= b_sclk_o when b_sclk_oe = '1' else 'Z';
+    sclk_pad <= host_sclk when host_en = '1' else 'Z';
     sclk_pad <= 'L';
     cs_n_pad <= a_cs_n_o when a_cs_n_oe = '1' else 'Z';
     cs_n_pad <= b_cs_n_o when b_cs_n_oe = '1' else 'Z';
+    cs_n_pad <= host_cs_n when host_en = '1' else 'Z';
     cs_n_pad <= 'H';
     mosi_pad <= a_mosi_o when a_mosi_oe = '1' else 'Z';
     mosi_pad <= b_mosi_o when b_mosi_oe = '1' else 'Z';
+    mosi_pad <= host_mosi when host_en = '1' else 'Z';
     mosi_pad <= 'L';
     miso_pad <= a_miso_o when a_miso_oe = '1' else 'Z';
     miso_pad <= b_miso_o when b_miso_oe = '1' else 'Z';
@@ -262,7 +259,8 @@ begin
     miso_in <= to_x01(miso_pad);
 
     -- Clients go to the port in that role; the port in the other role
-    -- gets junk (start held high) once junk_en is set.
+    -- gets junk (start held high) once junk_en is set. In phase 2 both
+    -- slaves get the host's reply.
     a_m_start   <= m_start   when swap = '0' else junk_en;
     a_m_tx_data <= m_tx_data when swap = '0' else (others => '1');
     b_m_start   <= m_start   when swap = '1' else junk_en;
@@ -271,29 +269,36 @@ begin
     m_rx_data   <= a_m_rx_data  when swap = '0' else b_m_rx_data;
     m_rx_valid  <= a_m_rx_valid when swap = '0' else b_m_rx_valid;
 
-    a_s_tx_data <= s_tx_data    when swap = '1' else (others => '1');
-    b_s_tx_data <= s_tx_data    when swap = '0' else (others => '1');
+    a_s_tx_data <= host_resp when host_en = '1' else s_tx_data when swap = '1' else (others => '1');
+    b_s_tx_data <= host_resp when host_en = '1' else s_tx_data when swap = '0' else (others => '1');
     s_rx_data   <= b_s_rx_data  when swap = '0' else a_s_rx_data;
     s_rx_bits   <= b_s_rx_bits  when swap = '0' else a_s_rx_bits;
     s_rx_valid  <= b_s_rx_valid when swap = '0' else a_s_rx_valid;
 
     ------------------------------------------------------------------
-    -- Stimulus: test plan and master client
+    -- Stimulus: test plan, master client and software host
     ------------------------------------------------------------------
 
     stim_proc: process
-        variable s1    : positive := SEED;
-        variable s2    : positive := 7919;
-        variable r     : real;
-        variable v     : integer;
-        variable g     : integer;
-        variable frame : natural := 0;
-        variable b2b   : boolean := false;
-        variable mtx   : mword_t;
-        variable resp  : sword_t;
-        variable mexp  : mword_t;
-        variable srx   : sword_t;
-        variable n_b2b : natural := 0;
+        variable s1      : positive := SEED;
+        variable s2      : positive := 7919;
+        variable r       : real;
+        variable v       : integer;
+        variable g       : integer;
+        variable n       : integer;
+        variable k       : integer;
+        variable frame   : natural := 0;
+        variable b2b     : boolean := false;
+        variable mtx     : word_t;
+        variable resp    : word_t;
+        variable hbits   : std_logic_vector(HOST_MAX-1 downto 0);
+        variable hrx     : std_logic_vector(HOST_MAX-1 downto 0);
+        variable exp_rx  : word_t;
+        variable n_b2b   : natural := 0;
+        variable n_empty : natural := 0;
+        variable n_short : natural := 0;
+        variable n_exact : natural := 0;
+        variable n_long  : natural := 0;
 
         procedure rnd(lo, hi : in integer; x : out integer) is
             variable t : integer;
@@ -361,13 +366,8 @@ begin
             for f in 1 to NUM_FRAMES loop
                 rnd_bits(mtx);
                 rnd_bits(resp);
-                srx := (others => '0');
-                srx(K-1 downto 0) := mtx(M_WIDTH-1 downto M_WIDTH-K);
-                mexp := (others => '0');
-                mexp(M_WIDTH-1 downto M_WIDTH-K) := resp(S_WIDTH-1 downto S_WIDTH-K);
                 plan_sresp(frame) <= resp;
-                plan_srx(frame)   <= srx;
-                plan_mexp(frame)  <= mexp;
+                plan_mtx(frame)   <= mtx;
                 if b2b then
                     plan_b2b(frame) <= '1';
                 end if;
@@ -403,11 +403,96 @@ begin
             cycles(10);
         end loop;
 
+        -- phase 2: both ports slaves, frames of any length from the host
+        iso_check <= '0';
+        junk_en   <= '0';
+        strap_b   <= '1';
+        cycles(10);
+        host_en <= '1';
+        cycles(10);
+        report "TB: both ports are slaves, the software host drives the pins" severity note;
+
+        for f in 1 to HOST_FRAMES loop
+            if f = 1 then
+                n := 0;
+            elsif f = 2 then
+                n := WIDTH;
+            elsif f = 3 then
+                n := HOST_MAX;
+            else
+                rnd(1, HOST_MAX, n);
+            end if;
+            rnd_bits(hbits);
+            rnd_bits(resp);
+            host_resp <= resp;
+            cycles(2);
+
+            host_cs_n <= '0';
+            cycles(SCK_DIV);
+            for i in 0 to n-1 loop
+                host_mosi <= hbits(HOST_MAX-1-i);
+                cycles(SCK_DIV);
+                host_sclk <= '1';
+                hrx(HOST_MAX-1-i) := miso_in;
+                cycles(SCK_DIV);
+                host_sclk <= '0';
+            end loop;
+            cycles(SCK_DIV);
+            host_cs_n <= '1';
+            host_mosi <= '0';
+
+            if n < WIDTH then
+                k := n;
+            else
+                k := WIDTH;
+            end if;
+            exp_rx := (others => '0');
+            for i in 0 to k-1 loop
+                exp_rx(k-1-i) := hbits(HOST_MAX-1-i);
+            end loop;
+            for i in 0 to n-1 loop
+                if i < WIDTH then
+                    assert hrx(HOST_MAX-1-i) = resp(WIDTH-1-i)
+                        report "host: frame " & integer'image(f) & " reply bit " & integer'image(i) & " wrong" severity error;
+                else
+                    assert hrx(HOST_MAX-1-i) = '0'
+                        report "host: frame " & integer'image(f) & " reply bit " & integer'image(i) & " is not 0" severity error;
+                end if;
+            end loop;
+
+            for c in 1 to 10 loop
+                wait until rising_edge(clk);
+                exit when a_s_rx_valid = '1';
+            end loop;
+            assert a_s_rx_valid = '1' and b_s_rx_valid = '1'
+                report "host: frame " & integer'image(f) & " (" & integer'image(n) & " bits) not reported" severity error;
+            assert to_integer(unsigned(a_s_rx_bits)) = k and to_integer(unsigned(b_s_rx_bits)) = k
+                report "host: frame " & integer'image(f) & " reported " & integer'image(to_integer(unsigned(a_s_rx_bits))) &
+                       " bits, expected " & integer'image(k) severity error;
+            assert a_s_rx_data = exp_rx and b_s_rx_data = exp_rx
+                report "host: frame " & integer'image(f) & " word is " & hex(a_s_rx_data) &
+                       ", expected " & hex(exp_rx) severity error;
+
+            if n = 0 then
+                n_empty := n_empty + 1;
+            elsif n < WIDTH then
+                n_short := n_short + 1;
+            elsif n = WIDTH then
+                n_exact := n_exact + 1;
+            else
+                n_long := n_long + 1;
+            end if;
+            rnd(10, 30, g);
+            cycles(g);
+        end loop;
+        host_en <= '0';
+
         assert n_b2b > 0
             report "TB: coverage hole (no back-to-back frame)" severity error;
-        report "TB: PASS - " & integer'image(frame) & " frames of " & integer'image(M_WIDTH) &
-               " bits against a " & integer'image(S_WIDTH) & "-bit slave word (" &
-               integer'image(n_b2b) & " back-to-back)"
+        report "TB: PASS - " & integer'image(frame) & " master frames of " & integer'image(WIDTH) & " bits (" &
+               integer'image(n_b2b) & " back-to-back), " & integer'image(HOST_FRAMES) & " host frames (" &
+               integer'image(n_empty) & " empty, " & integer'image(n_short) & " shorter, " &
+               integer'image(n_exact) & " exact, " & integer'image(n_long) & " longer)"
             severity note;
         sim_done <= '1';
         wait;
@@ -423,17 +508,17 @@ begin
         variable i : natural := 0;
     begin
         wait until rising_edge(clk);
-        if chk_on = '1' and s_rx_valid = '1' then
+        if chk_on = '1' and host_en = '0' and s_rx_valid = '1' then
             assert i < plan_fcnt
                 report "slave: unexpected word " & hex(s_rx_data) severity error;
             assert m_rx_cnt > i
                 report "slave: rx_valid for frame " & integer'image(i) & " before the frame ended" severity error;
-            assert to_integer(unsigned(s_rx_bits)) = K
+            assert to_integer(unsigned(s_rx_bits)) = WIDTH
                 report "slave: frame " & integer'image(i) & " reported " & integer'image(to_integer(unsigned(s_rx_bits))) &
-                       " bits, expected " & integer'image(K) severity error;
-            assert s_rx_data = plan_srx(i)
+                       " bits, expected " & integer'image(WIDTH) severity error;
+            assert s_rx_data = plan_mtx(i)
                 report "slave: frame " & integer'image(i) & " word is " & hex(s_rx_data) &
-                       ", expected " & hex(plan_srx(i)) severity error;
+                       ", expected " & hex(plan_mtx(i)) severity error;
             i := i + 1;
             s_rx_cnt <= i;
         end if;
@@ -451,9 +536,9 @@ begin
         if chk_on = '1' and m_rx_valid = '1' then
             assert j < plan_fcnt
                 report "master: unexpected word " & hex(m_rx_data) severity error;
-            assert m_rx_data = plan_mexp(j)
+            assert m_rx_data = plan_sresp(j)
                 report "master: frame " & integer'image(j) & " word is " & hex(m_rx_data) &
-                       ", expected " & hex(plan_mexp(j)) severity error;
+                       ", expected " & hex(plan_sresp(j)) severity error;
             assert cs_n_in = '1' and cs_p = '0'
                 report "master: frame " & integer'image(j) & " not flagged in the first cycle with CS# high" severity error;
             j := j + 1;
@@ -484,7 +569,7 @@ begin
         loop
             wait until rising_edge(clk);
 
-            assert sclk_in /= 'X' and cs_n_in /= 'X' and mosi_in /= 'X' and miso_in /= 'X'
+            assert sclk_in /= 'X' and cs_n_in /= 'X' and mosi_in /= 'X' and (miso_in /= 'X' or host_en = '1')
                 report "bus: contention on a pad" severity error;
 
             if cs_n_in = '1' then
@@ -494,52 +579,56 @@ begin
                     report "bus: MISO driven while CS# is high" severity error;
             end if;
 
-            -- frame boundaries
-            if cs_p = '1' and cs_n_in = '0' then
-                assert sclk_in = '0'
-                    report "bus: SCK high when CS# falls" severity error;
-                assert hi_cnt >= CS_HIGH_CYCLES
-                    report "bus: CS# high for " & integer'image(hi_cnt) & " cycles before frame " &
-                           integer'image(frame) severity error;
-                if plan_b2b(frame) = '1' then
-                    assert hi_cnt = CS_HIGH_CYCLES
-                        report "bus: back-to-back frame " & integer'image(frame) & " waited " &
-                               integer'image(hi_cnt) & " cycles with CS# high" severity error;
+            if host_en = '0' then
+                -- frame boundaries
+                if cs_p = '1' and cs_n_in = '0' then
+                    assert sclk_in = '0'
+                        report "bus: SCK high when CS# falls" severity error;
+                    assert hi_cnt >= CS_HIGH_CYCLES
+                        report "bus: CS# high for " & integer'image(hi_cnt) & " cycles before frame " &
+                               integer'image(frame) severity error;
+                    if plan_b2b(frame) = '1' then
+                        assert hi_cnt = CS_HIGH_CYCLES
+                            report "bus: back-to-back frame " & integer'image(frame) & " waited " &
+                                   integer'image(hi_cnt) & " cycles with CS# high" severity error;
+                    end if;
+                    lo_cnt := 0;
+                    phase  := 0;
+                elsif cs_p = '0' and cs_n_in = '1' then
+                    assert lo_cnt = FRAME_CYC
+                        report "bus: frame " & integer'image(frame) & " had CS# low for " & integer'image(lo_cnt) &
+                               " cycles, expected " & integer'image(FRAME_CYC) severity error;
+                    if sclk_p = '1' then
+                        assert phase = SCK_DIV
+                            report "bus: last SCK high phase lasted " & integer'image(phase) & " cycles" severity error;
+                    end if;
+                    frame  := frame + 1;
+                    hi_cnt := 0;
                 end if;
-                lo_cnt := 0;
-                phase  := 0;
-            elsif cs_p = '0' and cs_n_in = '1' then
-                assert lo_cnt = FRAME_CYC
-                    report "bus: frame " & integer'image(frame) & " had CS# low for " & integer'image(lo_cnt) &
-                           " cycles, expected " & integer'image(FRAME_CYC) severity error;
-                if sclk_p = '1' then
-                    assert phase = SCK_DIV
-                        report "bus: last SCK high phase lasted " & integer'image(phase) & " cycles" severity error;
+                if cs_n_in = '0' then
+                    lo_cnt := lo_cnt + 1;
+                else
+                    hi_cnt := hi_cnt + 1;
                 end if;
-                frame  := frame + 1;
-                hi_cnt := 0;
-            end if;
-            if cs_n_in = '0' then
-                lo_cnt := lo_cnt + 1;
-            else
-                hi_cnt := hi_cnt + 1;
+
+                -- SCK phases inside a frame
+                if cs_n_in = '0' then
+                    if sclk_in /= sclk_p and phase > 0 then
+                        assert phase = SCK_DIV
+                            report "bus: SCK phase lasted " & integer'image(phase) & " cycles" severity error;
+                        phase := 1;
+                    else
+                        phase := phase + 1;
+                    end if;
+                end if;
             end if;
 
-            -- SCK phases and data changes inside a frame
-            if cs_n_in = '0' then
-                if sclk_in /= sclk_p and phase > 0 then
-                    assert phase = SCK_DIV
-                        report "bus: SCK phase lasted " & integer'image(phase) & " cycles" severity error;
-                    phase := 1;
-                else
-                    phase := phase + 1;
-                end if;
-                if cs_p = '0' then
-                    assert mosi_in = mosi_p or sclk_in = '0'
-                        report "bus: MOSI changed while SCK is high" severity error;
-                    assert miso_in = miso_p or sclk_in = '0'
-                        report "bus: MISO changed while SCK is high" severity error;
-                end if;
+            -- data changes only while SCK is low
+            if cs_n_in = '0' and cs_p = '0' then
+                assert mosi_in = mosi_p or sclk_in = '0'
+                    report "bus: MOSI changed while SCK is high" severity error;
+                assert miso_in = miso_p or sclk_in = '0'
+                    report "bus: MISO changed while SCK is high" severity error;
             end if;
 
             -- pins driven by the right port, unused roles silent
