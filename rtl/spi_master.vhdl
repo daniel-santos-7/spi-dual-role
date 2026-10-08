@@ -33,7 +33,6 @@ end entity spi_master;
 
 architecture rtl of spi_master is
 
-    signal busy     : std_logic;
     signal sclk     : std_logic;
     signal cs_n     : std_logic;
     signal div_cnt  : natural range 0 to SCK_DIV-1;
@@ -51,9 +50,9 @@ begin
 
     assert CS_HIGH_CYCLES >= 2 report "SPI master: CS_HIGH_CYCLES must be at least 2." severity failure;
 
-    ready <= '1' when busy = '0' and hi_cnt = CS_HIGH_CYCLES-1 else '0';
+    ready <= '1' when cs_n = '1' and hi_cnt = CS_HIGH_CYCLES-1 else '0';
     start <= start_i and ready;
-    tick  <= '1' when busy = '1' and div_cnt = SCK_DIV-1 else '0';
+    tick  <= '1' when cs_n = '0' and div_cnt = SCK_DIV-1 else '0';
     rise  <= tick and not sclk;
     fall  <= tick and sclk;
     last  <= '1' when fall = '1' and unsigned(bits_i) = WIDTH else '0';
@@ -62,13 +61,10 @@ begin
     begin
         if rising_edge(clk_i) then
             if rst_i = '1' then
-                busy <= '0';
                 cs_n <= '1';
             elsif start = '1' then
-                busy <= '1';
                 cs_n <= '0';
             elsif last = '1' then
-                busy <= '0';
                 cs_n <= '1';
             end if;
         end if;
@@ -81,7 +77,7 @@ begin
                 div_cnt <= 0;
             elsif start = '1' then
                 div_cnt <= 0;
-            elsif busy = '1' and div_cnt /= SCK_DIV-1 then
+            elsif cs_n = '0' and div_cnt /= SCK_DIV-1 then
                 div_cnt <= div_cnt + 1;
             elsif tick = '1' then
                 div_cnt <= 0;
