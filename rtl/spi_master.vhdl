@@ -33,15 +33,15 @@ end entity spi_master;
 
 architecture rtl of spi_master is
 
+    type state_t is (IDLE, SCK_LO, SCK_HI, HOLD);
+
+    signal state    : state_t;
+    signal cnt      : natural range 0 to SCK_DIV + CS_HIGH_CYCLES;
     signal sclk     : std_logic;
     signal cs_n     : std_logic;
-    signal div_cnt  : natural range 0 to SCK_DIV-1;
-    signal hi_cnt   : natural range 0 to CS_HIGH_CYCLES-1;
     signal stop_reg : std_logic;
 
     signal ready    : std_logic;
-    signal start    : std_logic;
-    signal tick     : std_logic;
     signal rise     : std_logic;
     signal fall     : std_logic;
     signal last     : std_logic;
@@ -50,53 +50,59 @@ begin
 
     assert CS_HIGH_CYCLES >= 2 report "SPI master: CS_HIGH_CYCLES must be at least 2." severity failure;
 
-    ready <= '1' when cs_n = '1' and hi_cnt = CS_HIGH_CYCLES-1 else '0';
-    start <= start_i and ready;
-    tick  <= '1' when cs_n = '0' and div_cnt = SCK_DIV-1 else '0';
-    rise  <= tick and not sclk;
-    fall  <= tick and sclk;
+    ready <= '1' when state = IDLE else '0';
+    rise  <= '1' when state = SCK_LO and cnt = SCK_DIV-1 else '0';
+    fall  <= '1' when state = SCK_HI and cnt = SCK_DIV-1 else '0';
     last  <= '1' when fall = '1' and unsigned(bits_i) = WIDTH else '0';
 
-    frame_proc: process(clk_i)
+    fsm_proc: process(clk_i)
     begin
         if rising_edge(clk_i) then
             if rst_i = '1' then
-                cs_n <= '1';
-            elsif start = '1' then
-                cs_n <= '0';
-            elsif last = '1' then
-                cs_n <= '1';
+                state <= IDLE;
+                cnt   <= 0;
+                sclk  <= '0';
+                cs_n  <= '1';
+            else
+                case state is
+                    when IDLE =>
+                        if start_i = '1' then
+                            state <= SCK_LO;
+                            cnt   <= 0;
+                            cs_n  <= '0';
+                        end if;
+                    when SCK_LO =>
+                        if cnt = SCK_DIV-1 then
+                            state <= SCK_HI;
+                            cnt   <= 0;
+                            sclk  <= '1';
+                        else
+                            cnt <= cnt + 1;
+                        end if;
+                    when SCK_HI =>
+                        if cnt = SCK_DIV-1 then
+                            cnt  <= 0;
+                            sclk <= '0';
+                            if unsigned(bits_i) = WIDTH then
+                                state <= HOLD;
+                                cs_n  <= '1';
+                            else
+                                state <= SCK_LO;
+                            end if;
+                        else
+                            cnt <= cnt + 1;
+                        end if;
+                    when HOLD =>
+                        if cnt = CS_HIGH_CYCLES-2 then
+                            state <= IDLE;
+                            cnt   <= 0;
+                        else
+                            cnt <= cnt + 1;
+                        end if;
+                end case;
             end if;
         end if;
-    end process frame_proc;
-
-    div_proc: process(clk_i)
-    begin
-        if rising_edge(clk_i) then
-            if rst_i = '1' then
-                div_cnt <= 0;
-            elsif start = '1' then
-                div_cnt <= 0;
-            elsif cs_n = '0' and div_cnt /= SCK_DIV-1 then
-                div_cnt <= div_cnt + 1;
-            elsif tick = '1' then
-                div_cnt <= 0;
-            end if;
-        end if;
-    end process div_proc;
-
-    sclk_proc: process(clk_i)
-    begin
-        if rising_edge(clk_i) then
-            if rst_i = '1' then
-                sclk <= '0';
-            elsif rise = '1' then
-                sclk <= '1';
-            elsif fall = '1' then
-                sclk <= '0';
-            end if;
-        end if;
-    end process sclk_proc;
+    end process fsm_proc;
 
     stop_proc: process(clk_i)
     begin
@@ -109,23 +115,10 @@ begin
         end if;
     end process stop_proc;
 
-    hi_cnt_proc: process(clk_i)
-    begin
-        if rising_edge(clk_i) then
-            if rst_i = '1' then
-                hi_cnt <= CS_HIGH_CYCLES-1;
-            elsif cs_n = '0' then
-                hi_cnt <= 0;
-            elsif hi_cnt /= CS_HIGH_CYCLES-1 then
-                hi_cnt <= hi_cnt + 1;
-            end if;
-        end if;
-    end process hi_cnt_proc;
-
     sclk_o  <= sclk;
     cs_n_o  <= cs_n;
     ready_o <= ready;
-    start_o <= start;
+    start_o <= start_i and ready;
     stop_o  <= stop_reg;
     rise_o  <= rise;
     fall_o  <= fall;
