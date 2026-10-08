@@ -45,6 +45,8 @@ architecture rtl of spi_master is
     signal rise     : std_logic;
     signal fall     : std_logic;
     signal last     : std_logic;
+    signal cnt_clr  : std_logic;
+    signal cnt_en   : std_logic;
 
 begin
 
@@ -55,54 +57,60 @@ begin
     fall  <= '1' when state = SCK_HI and cnt = SCK_DIV-1 else '0';
     last  <= '1' when fall = '1' and unsigned(bits_i) = WIDTH else '0';
 
+    cnt_clr <= '1' when state = IDLE or rise = '1' or fall = '1' or (state = HOLD and cnt = CS_HIGH_CYCLES-2) else '0';
+
     fsm_proc: process(clk_i)
     begin
         if rising_edge(clk_i) then
             if rst_i = '1' then
-                state <= IDLE;
-                cnt   <= 0;
-                sclk  <= '0';
-                cs_n  <= '1';
+                state  <= IDLE;
+                sclk   <= '0';
+                cs_n   <= '1';
+                cnt_en <= '0';
             else
                 case state is
                     when IDLE =>
                         if start_i = '1' then
-                            state <= SCK_LO;
-                            cnt   <= 0;
-                            cs_n  <= '0';
+                            state  <= SCK_LO;
+                            cs_n   <= '0';
+                            cnt_en <= '1';
                         end if;
                     when SCK_LO =>
-                        if cnt = SCK_DIV-1 then
+                        if rise = '1' then
                             state <= SCK_HI;
-                            cnt   <= 0;
                             sclk  <= '1';
-                        else
-                            cnt <= cnt + 1;
                         end if;
                     when SCK_HI =>
-                        if cnt = SCK_DIV-1 then
-                            cnt  <= 0;
-                            sclk <= '0';
-                            if unsigned(bits_i) = WIDTH then
-                                state <= HOLD;
-                                cs_n  <= '1';
-                            else
-                                state <= SCK_LO;
-                            end if;
-                        else
-                            cnt <= cnt + 1;
+                        if last = '1' then
+                            state <= HOLD;
+                            sclk  <= '0';
+                            cs_n  <= '1';
+                        elsif fall = '1' then
+                            state <= SCK_LO;
+                            sclk  <= '0';
                         end if;
                     when HOLD =>
                         if cnt = CS_HIGH_CYCLES-2 then
-                            state <= IDLE;
-                            cnt   <= 0;
-                        else
-                            cnt <= cnt + 1;
+                            state  <= IDLE;
+                            cnt_en <= '0';
                         end if;
                 end case;
             end if;
         end if;
     end process fsm_proc;
+
+    cnt_proc: process(clk_i)
+    begin
+        if rising_edge(clk_i) then
+            if rst_i = '1' then
+                cnt <= 0;
+            elsif cnt_clr = '1' then
+                cnt <= 0;
+            elsif cnt_en = '1' then
+                cnt <= cnt + 1;
+            end if;
+        end if;
+    end process cnt_proc;
 
     stop_proc: process(clk_i)
     begin
