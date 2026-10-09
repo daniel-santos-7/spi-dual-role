@@ -42,8 +42,7 @@ architecture rtl of spi_master is
     signal stop_reg : std_logic;
 
     signal ready    : std_logic;
-    signal rise     : std_logic;
-    signal fall     : std_logic;
+    signal half_end : std_logic;
     signal last     : std_logic;
     signal cnt_clr  : std_logic;
     signal cnt_en   : std_logic;
@@ -52,12 +51,10 @@ begin
 
     assert CS_HIGH_CYCLES >= 2 report "SPI master: CS_HIGH_CYCLES must be at least 2." severity failure;
 
-    ready <= '1' when state = IDLE else '0';
-    rise  <= '1' when state = SCK_LO and cnt = SCK_DIV-1 else '0';
-    fall  <= '1' when state = SCK_HI and cnt = SCK_DIV-1 else '0';
-    last  <= '1' when fall = '1' and unsigned(bits_i) = WIDTH else '0';
+    half_end <= '1' when cnt = SCK_DIV-1 else '0';
+    last     <= '1' when state = SCK_HI and half_end = '1' and unsigned(bits_i) = WIDTH else '0';
 
-    cnt_clr <= '1' when state = IDLE or rise = '1' or fall = '1' or (state = HOLD and cnt = CS_HIGH_CYCLES-2) else '0';
+    cnt_clr <= '1' when state = IDLE or ((state = SCK_LO or state = SCK_HI) and half_end = '1') or (state = HOLD and cnt = CS_HIGH_CYCLES-2) else '0';
 
     fsm_proc: process(clk_i)
     begin
@@ -67,6 +64,7 @@ begin
                 sclk   <= '0';
                 cs_n   <= '1';
                 cnt_en <= '0';
+                ready  <= '1';
             else
                 case state is
                     when IDLE =>
@@ -74,9 +72,10 @@ begin
                             state  <= SCK_LO;
                             cs_n   <= '0';
                             cnt_en <= '1';
+                            ready  <= '0';
                         end if;
                     when SCK_LO =>
-                        if rise = '1' then
+                        if half_end = '1' then
                             state <= SCK_HI;
                             sclk  <= '1';
                         end if;
@@ -85,7 +84,7 @@ begin
                             state <= HOLD;
                             sclk  <= '0';
                             cs_n  <= '1';
-                        elsif fall = '1' then
+                        elsif half_end = '1' then
                             state <= SCK_LO;
                             sclk  <= '0';
                         end if;
@@ -93,6 +92,7 @@ begin
                         if cnt = CS_HIGH_CYCLES-2 then
                             state  <= IDLE;
                             cnt_en <= '0';
+                            ready  <= '1';
                         end if;
                 end case;
             end if;
@@ -128,7 +128,7 @@ begin
     ready_o <= ready;
     start_o <= start_i and ready;
     stop_o  <= stop_reg;
-    rise_o  <= rise;
-    fall_o  <= fall;
+    rise_o  <= '1' when state = SCK_LO and half_end = '1' else '0';
+    fall_o  <= '1' when state = SCK_HI and half_end = '1' else '0';
 
 end architecture rtl;
