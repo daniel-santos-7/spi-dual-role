@@ -44,7 +44,7 @@ architecture rtl of spi_master is
     signal ready    : std_logic;
     signal cnt_max  : natural range 0 to SCK_DIV + CS_HIGH_CYCLES;
     signal cnt_end  : std_logic;
-    signal last     : std_logic;
+    signal bits_end : std_logic;
     signal cnt_clr  : std_logic;
     signal cnt_en   : std_logic;
 
@@ -55,17 +55,19 @@ begin
     cnt_max <= CS_HIGH_CYCLES-2 when state = HOLD else SCK_DIV-1;
     cnt_end <= '1' when cnt = cnt_max else '0';
     cnt_clr <= '1' when state = IDLE or cnt_end = '1' else '0';
-    last    <= '1' when state = SCK_HI and cnt_end = '1' and unsigned(bits_i) = WIDTH else '0';
+
+    bits_end <= '1' when unsigned(bits_i) = WIDTH else '0';
 
     fsm_proc: process(clk_i)
     begin
         if rising_edge(clk_i) then
             if rst_i = '1' then
-                state  <= IDLE;
-                sclk   <= '0';
-                cs_n   <= '1';
-                cnt_en <= '0';
-                ready  <= '1';
+                state    <= IDLE;
+                sclk     <= '0';
+                cs_n     <= '1';
+                cnt_en   <= '0';
+                ready    <= '1';
+                stop_reg <= '0';
             else
                 case state is
                     when IDLE =>
@@ -81,15 +83,18 @@ begin
                             sclk  <= '1';
                         end if;
                     when SCK_HI =>
-                        if last = '1' then
-                            state <= HOLD;
-                            sclk  <= '0';
-                            cs_n  <= '1';
-                        elsif cnt_end = '1' then
-                            state <= SCK_LO;
-                            sclk  <= '0';
+                        if cnt_end = '1' then
+                            sclk <= '0';
+                            if bits_end = '1' then
+                                state    <= HOLD;
+                                cs_n     <= '1';
+                                stop_reg <= '1';
+                            else
+                                state <= SCK_LO;
+                            end if;
                         end if;
                     when HOLD =>
+                        stop_reg <= '0';
                         if cnt_end = '1' then
                             state  <= IDLE;
                             cnt_en <= '0';
@@ -112,17 +117,6 @@ begin
             end if;
         end if;
     end process cnt_proc;
-
-    stop_proc: process(clk_i)
-    begin
-        if rising_edge(clk_i) then
-            if rst_i = '1' then
-                stop_reg <= '0';
-            else
-                stop_reg <= last;
-            end if;
-        end if;
-    end process stop_proc;
 
     sclk_o  <= sclk;
     cs_n_o  <= cs_n;
