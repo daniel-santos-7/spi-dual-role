@@ -45,7 +45,6 @@ architecture rtl of spi_master is
     signal cnt_max  : natural range 0 to SCK_DIV + CS_HIGH_CYCLES;
     signal cnt_end  : std_logic;
     signal bits_end : std_logic;
-    signal cnt_clr  : std_logic;
     signal cnt_en   : std_logic;
 
 begin
@@ -54,7 +53,6 @@ begin
 
     cnt_max <= CS_HIGH_CYCLES-2 when state = HOLD else SCK_DIV-1;
     cnt_end <= '1' when cnt = cnt_max else '0';
-    cnt_clr <= '1' when state = IDLE or cnt_end = '1' else '0';
 
     bits_end <= '1' when unsigned(bits_i) = WIDTH else '0';
 
@@ -110,10 +108,12 @@ begin
         if rising_edge(clk_i) then
             if rst_i = '1' then
                 cnt <= 0;
-            elsif cnt_clr = '1' then
-                cnt <= 0;
             elsif cnt_en = '1' then
-                cnt <= cnt + 1;
+                if cnt_end = '1' then
+                    cnt <= 0;
+                else
+                    cnt <= cnt + 1;
+                end if;
             end if;
         end if;
     end process cnt_proc;
